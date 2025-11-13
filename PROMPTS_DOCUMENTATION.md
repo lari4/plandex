@@ -247,3 +247,359 @@ The task is not yet complete. I will continue working on it in the next response
 - **Updating:** Use reference comments, show only changes + anchors
 - **Creating:** Include entire file, no reference comments
 
+---
+
+## 4. Context Management Prompts
+
+### GetArchitectContextSummary
+
+**Purpose:** Instructions for the architect role to assess and load relevant context.
+
+**Location:** `app/server/model/prompts/architect_context.go`
+
+**Function Signature:** `GetArchitectContextSummary(tokenLimit int) string`
+
+**Description:** Two-phase process for context management:
+
+**Phase 1 - Context (Current Phase):**
+- Examine user's request and available codebase information
+- Determine relevant context for next phase
+- List categories and files needed
+- End with `<PlandexFinish/>`
+
+**Phase 2 - Response (Next Phase):**
+- System incorporates selected context
+- Create plan (tell mode) or provide answer (chat mode)
+- Implementation happens only in Phase 2
+
+**Key Instructions:**
+1. Assess if have enough information (if not, ask user)
+2. Create high-level architectural overview/plan
+3. Output context sections if needed:
+   - `### Categories` - list of context categories
+   - `### Files` - grouped by category with relevant symbols
+   - Files MUST be from codebase map or pending changes
+   - Order files by importance/relevance
+4. Output `<PlandexFinish/>` immediately after
+
+**Critical Rules:**
+- Do NOT write any code or implementation
+- Do NOT create tasks or plans
+- ONLY include files from codebase map or pending changes
+- Never guess file paths or include hypothetical files
+
+### GetAutoContextTellPrompt
+
+**Purpose:** Tell mode context loading instructions for auto-context phase.
+
+**Location:** `app/server/model/prompts/architect_context.go`
+
+**Function Signature:** `GetAutoContextTellPrompt(params CreatePromptParams) string`
+
+**Description:** Instructions for loading context automatically in tell mode:
+- Create brief high-level overview (NOT final plan)
+- Adapt length to project size and complexity
+- Continue with context loading in same response
+- Output categories and files if context needed
+- Follow interface/implementation, API chain, database chain rules
+
+**Context Loading Rules:**
+1. **Interface & Implementation Rule:** Load both interface and implementation files
+2. **Reference Implementation Rule:** Load existing similar features as reference
+3. **API Client Chain Rule:** Load API interface + client implementation
+4. **Database Chain Rule:** Load model files + helpers + similar DB operations
+5. **Utility Dependencies Rule:** Load ALL utility files that might be needed
+
+**Finding Relevant Context:**
+- Look for naming patterns (similar prefixes/suffixes)
+- Find feature groupings (all related files)
+- Follow file relationships (interface, test, helper files)
+
+### GetAutoContextChatPrompt
+
+**Purpose:** Chat mode context loading instructions for auto-context phase.
+
+**Location:** `app/server/model/prompts/architect_context.go`
+
+**Function Signature:** `GetAutoContextChatPrompt(params CreatePromptParams) string`
+
+**Description:** Instructions for assessing and loading context in chat mode:
+- Assess which context is relevant to user's question/message
+- Be eager about loading context (if in doubt, load it)
+- Mention what you need to check naturally
+- Output categories and files in same format as tell mode
+
+**When to Load:**
+- Specific files needed from codebase map
+- Related files would help answer
+- Need to understand implementations or dependencies
+
+**Output Format:**
+```
+### Categories
+- Category 1
+- Category 2
+
+### Files
+Category 1:
+`file1.go` - symbol1, symbol2, symbol3 (annotation)
+`file2.go` - symbol1, symbol2
+
+Category 2:
+`file3.js` - symbol1, symbol2
+
+<PlandexFinish/>
+```
+
+---
+
+## 5. Chat Mode Prompts
+
+### GetChatSysPrompt
+
+**Purpose:** System prompt for chat-only mode interactions.
+
+**Location:** `app/server/model/prompts/chat.go`
+
+**Function Signature:** `GetChatSysPrompt(params CreatePromptParams) string`
+
+**Description:** Defines behavior for chat mode where AI discusses code without making changes.
+
+**Key Capabilities:**
+- Engage in technical discussion about code
+- Provide explanations and answer questions
+- Include code snippets for explanation
+- Reference files from context
+- Help debug issues
+- Suggest approaches and discuss trade-offs
+- Evaluate implementation strategies
+
+**Cannot Do:**
+- Create or modify any files
+- Output formal implementation code blocks
+- Make formal plans using "### Tasks"
+- Load context multiple times consecutively
+- Switch to implementation mode without user request
+
+**Execution Mode Handling:**
+- If enabled: Can discuss both file changes and command execution
+- If disabled: Focus on file updates, mention execution mode needed for commands
+
+**Context Handling:**
+- Auto-context: Continue conversation with loaded context
+- Manual: Ask user to provide needed files
+
+**Transition to Tell Mode:**
+- Use exact phrase "switch to tell mode" to give user option
+- Remind users they can use tell mode for actual changes
+
+---
+
+## 6. Code Formatting Prompts
+
+### ChangeExplanationPrompt
+
+**Purpose:** Defines the Action Explanation Format for all code changes.
+
+**Location:** `app/server/model/prompts/explanation_format.go`
+
+**Description:** Mandatory format that MUST precede every code block.
+
+**Format for Updating Existing Files:**
+```
+**Updating `[file path]`**
+Type: [add|prepend|append|replace|remove|overwrite]
+Summary: [brief description]
+Replace: [lines to replace/remove] (for replace/remove only)
+Context: [surrounding code structures]
+Preserve: [symbols to preserve] (for overwrite only)
+```
+
+**Type Definitions:**
+- **add:** Insert new code within file (NO existing code changed/removed)
+- **prepend:** Insert at start of file
+- **append:** Insert at end of file
+- **replace:** Replace existing code with new code
+- **remove:** Remove existing code with nothing new
+- **overwrite:** Replace entire file
+
+**Multiple Changes to Same File:**
+```
+**Updating `file.go`**
+Change 1.
+  Type: remove
+  Summary: Remove unused functions
+  Replace: lines 25-85
+  Context: Located between `funcA` and `funcB`
+
+Change 2.
+  Type: append
+  Summary: Add new function at end
+  Context: Last structure is `finalFunc`
+```
+
+**Format for Creating New Files:**
+```
+**Creating `[file path]`**
+Type: new file
+Summary: [brief description of new file]
+```
+
+**Critical Context Field Rules:**
+- Symbols/structures in Context MUST NOT be modified
+- They serve as ANCHORS to locate the change
+- All Context symbols MUST appear in code block
+- Anchors MUST be immediately adjacent to change
+- Failure to include Context symbols = CRITICAL ERROR
+
+**Symbol Format:**
+- List symbols in comma-separated list with backticks
+- Use ONLY symbol name, NOT full signature
+- Example: `funcName` not `func funcName(params) returns`
+
+### UpdateFormatPrompt
+
+**Purpose:** Detailed instructions for updating existing files with reference comments.
+
+**Location:** `app/server/model/prompts/update_format.go`
+
+**Description:** Comprehensive guide on using reference comments and updating files correctly.
+
+**Reference Comment Rules:**
+- ONLY use `// ... existing code ...` (with appropriate comment symbol)
+- NEVER use any other variations
+- Must be on their own lines (never inline)
+- Must match indentation of original file
+- Must include trailing commas/syntax where necessary
+- Must not have multiple references in a row with no code between
+
+**For File Types Without Comments (JSON, etc.):**
+- Still use `// ... existing code ...`
+- Required for proper structure demonstration
+
+**Removal Comments:**
+- Use `// Plandex: removed code` (with appropriate comment symbol)
+- Replaces the code being removed
+- Do NOT include the removed code in block
+- Must be on own line with sufficient context
+
+**Critical Rules:**
+- Show ONLY changing code + necessary context
+- Include enough anchors to locate change unambiguously
+- Match original indentation EXACTLY
+- Preserve code order from original file
+- ALWAYS include `// ... existing code ...` at start (unless prepending)
+- ALWAYS include `// ... existing code ...` at end (unless appending)
+
+**Anchor Requirements:**
+When inserting code, must include:
+- Anchors from original file immediately before change
+- Anchors from original file immediately after change
+- Enough structure to show nesting level clearly
+
+### UpdateFormatAdditionalExamples
+
+**Purpose:** Extended examples of correct vs incorrect update formatting.
+
+**Location:** `app/server/model/prompts/update_format.go`
+
+**Description:** Provides concrete examples of:
+1. Adding new route (incorrect: replacing instead of inserting)
+2. Adding method to class (incorrect: ambiguous insertion)
+3. Adding configuration section (incorrect: lost context)
+4. Multiple changes to same file (incorrect: multiple blocks vs correct: single block)
+
+**Key Lessons:**
+- Always show surrounding context that will be preserved
+- Make insertion points unambiguous by showing adjacent code
+- Never remove existing functionality unless explicitly instructed
+- Use reference comments properly to indicate preserved sections
+- Show enough context to understand code structure
+
+---
+
+## 7. File Operations Prompts
+
+### FileOpsPlanningPrompt
+
+**Purpose:** Instructions for planning file operations (move, remove, reset).
+
+**Location:** `app/server/model/prompts/file_ops.go`
+
+**Description:** Explains special subtasks for file operations on files in context or with pending changes.
+
+**Available Operations:**
+- **Move:** Relocate or rename files
+- **Remove:** Delete files
+- **Reset:** Clear pending changes for files
+
+**Important Notes:**
+1. Can ONLY operate on files in context or with pending changes
+2. Cannot create new directories (created automatically)
+3. Cannot move file to path already in context/pending (would overwrite)
+4. After move: further updates go to NEW location
+5. After remove: further updates require creating NEW file
+
+**When to Use:**
+- Usually NOT used in initial plan implementation
+- Mainly for revising plans with pending changes
+- User specifically asks to move/remove files
+
+### FileOpsImplementationPrompt
+
+**Purpose:** Detailed format and rules for implementing file operations.
+
+**Location:** `app/server/model/prompts/file_ops.go`
+
+**Description:** Defines exact syntax for three types of file operation sections.
+
+**Move Files Section:**
+```
+### Move Files
+- `source/path.tsx` → `dest/path.tsx`
+- `components/button.tsx` → `pages/button.tsx`
+<EndPlandexFileOps/>
+```
+
+**Rules:**
+- Each line starts with dash (-)
+- Paths wrapped in backticks
+- Use → (Unicode arrow, NOT ->)
+- Can only move individual files (not directories)
+- Source MUST be in context or pending
+- Dest MUST NOT already exist
+- Dest directory created automatically if needed
+
+**Remove Files Section:**
+```
+### Remove Files
+- `components/page.tsx`
+- `layouts/header.tsx`
+<EndPlandexFileOps/>
+```
+
+**Rules:**
+- Each line starts with dash (-)
+- Paths wrapped in backticks
+- Can only remove individual files
+- All paths MUST be in context or pending
+
+**Reset Changes Section:**
+```
+### Reset Changes
+- `components/page.tsx`
+- `layouts/header.tsx`
+<EndPlandexFileOps/>
+```
+
+**Rules:**
+- Each line starts with dash (-)
+- Paths wrapped in backticks
+- Can only reset files WITH pending changes
+- Clears pending changes, returns to original state
+
+**All Sections Must:**
+- End with `<EndPlandexFileOps/>` tag
+- Follow exact format (no comments/extra text)
+- Only operate on files in context/pending
+
