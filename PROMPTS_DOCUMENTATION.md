@@ -603,3 +603,586 @@ When inserting code, must include:
 - Follow exact format (no comments/extra text)
 - Only operate on files in context/pending
 
+---
+
+## 8. Execution & Script Prompts
+
+### ApplyScriptSharedPrompt
+
+**Purpose:** Core instructions for the `_apply.sh` script and command execution.
+
+**Location:** `app/server/model/prompts/apply_exec.go`
+
+**Description:** Comprehensive guide for using the special `_apply.sh` file to execute commands on user's machine.
+
+**Core Concepts:**
+- Executed EXACTLY ONCE after ALL files created/updated
+- Script accumulates commands during plan
+- Resets to empty after successful execution
+- Runs in root directory of plan
+
+**Core Restrictions - MUST NOT:**
+- Create files/directories (use code blocks instead)
+- Use for file operations on files in context
+- Include shebang lines or error handling (handled externally)
+- Give script execution privileges (handled externally)
+- Tell users to run script (runs automatically)
+- Use separate script files unless absolutely necessary
+
+**Safety & Security:**
+- Only make strictly necessary changes
+- Prefer local over global changes (npm install --save-dev vs --global)
+- Only modify files/directories in plan root directory
+- Avoid user prompts (make reasonable defaults)
+- Don't run malicious/harmful commands
+
+**Keep It Lightweight:**
+- Script should be simple and focused
+- Offload complex logic to separate files
+- Don't include large content blocks
+- Use straightforward bash (avoid fancy constructs)
+- Make portable across Unix-like systems
+
+**Dependencies and Tools:**
+1. **Context-based Assumptions:**
+   - Make reasonable assumptions based on OS, files, project structure
+   - Don't install Node.js for existing Node project
+   - Don't install Go for Go project, Python for Python project, etc.
+
+2. **Checking for Tools:**
+   - Check if tool installed before using
+   - Install missing tools or exit with clear error
+
+3. **Dependency Management:**
+   - Don't install dependencies already in project
+   - Only install new dependencies for new features
+
+**Browser & Web Server Commands:**
+- Launch browser with `plandex browser [urls...]` command
+- CRITICAL: Run server in background with `&` before launching browser
+- Add sleep to allow server startup
+- Handle cleanup with `||` block for browser command failures
+- Use uncommon ports (3400+) to avoid conflicts
+- Try multiple ports if default is in use
+
+**Command Preservation:**
+- ALL commands persist until successful application
+- Each update ADDS/MODIFIES, never removes
+- After success, script resets to empty
+- History of previous scripts provided in prompt
+
+### ApplyScriptPlanningPrompt
+
+**Purpose:** Planning-specific instructions for _apply.sh during task breakdown.
+
+**Location:** `app/server/model/prompts/apply_exec.go`
+
+**Description:** Guides how to plan tasks involving command execution.
+
+**Natural Command Hierarchy:**
+1. Install required packages/dependencies
+2. Run build commands
+3. Run test/execution commands
+
+**Good Practices:**
+- Write dependency installations close to related subtasks
+- Group related commands together
+- Commands affecting whole project appear only ONCE
+- Update existing commands rather than duplicate
+
+**Bad Practices to Avoid:**
+- Don't write same command multiple times
+- Don't create separate subtasks for single commands
+- Don't duplicate installations
+
+**Example Good Structure:**
+```
+1. Add authentication feature
+   - Update auth-related files
+   - Write to _apply.sh: npm install auth-package
+
+2. Build and run
+   - Write to _apply.sh: npm run build, npm start
+```
+
+**Critical Requirement:**
+IMMEDIATELY BEFORE '### Tasks', MUST output '### Commands' section assessing whether commands needed in _apply.sh.
+
+**### Commands Section Format:**
+```
+### Commands
+
+The _apply.sh script is empty. I'll add commands to build and run the code.
+I'll add this step to the plan.
+
+### Tasks
+[... tasks including _apply.sh subtask ...]
+```
+
+### ApplyScriptImplementationPrompt
+
+**Purpose:** Implementation-specific instructions for writing to _apply.sh.
+
+**Location:** `app/server/model/prompts/apply_exec.go`
+
+**Description:** Detailed guide for actually implementing _apply.sh updates.
+
+**Code Block Format:**
+```
+- _apply.sh:
+<PlandexBlock lang="bash" path="_apply.sh">
+# commands here
+</PlandexBlock>
+```
+
+**CRITICAL Rules:**
+- ALWAYS include file path label exactly as shown
+- ALWAYS use `lang="bash"` in <PlandexBlock> tag
+- NO lines between path and opening tag
+- If empty: follow "creating new file" instructions
+- If not empty: follow "updating existing file" instructions
+
+**Command Output:**
+- DO NOT hide or filter command output
+- Show all command output (don't use --quiet, etc.)
+- Let commands display their natural output
+
+**Script Organization:**
+- Written defensively to fail gracefully
+- Organized logically with similar commands grouped
+- Commented only when necessary
+- Include logging ONLY for errors and long operations
+
+**Tool Checking Example:**
+```bash
+if ! command -v tool > /dev/null; then
+    echo "Error: tool is not installed"
+    exit 1
+fi
+```
+
+**Dependency Installation Example:**
+```bash
+npm install --save-dev \
+    package1 \
+    package2 \
+    package3
+```
+
+**Web Server with Browser Example:**
+```bash
+# Find available port
+export PORT=3400
+while ! nc -z localhost $PORT && [ $PORT -lt 3410 ]; do
+  export PORT=$((PORT + 1))
+done
+
+# Build and start in background
+npm run build
+npm start &
+SERVER_PID=$!
+
+# Wait for server
+sleep 3
+
+# Launch browser
+plandex browser http://localhost:$PORT || {
+   kill $SERVER_PID
+   exit 1
+}
+wait $SERVER_PID
+```
+
+**Process Management:**
+- If running multiple processes, handle partial failures
+- Store PIDs, wait on all processes
+- If any fail, kill all and exit with error code
+- No need for `trap`, `setsid`, `disown` (handled by wrapper)
+
+---
+
+## 9. Naming Prompts
+
+### SysPlanName / SysPlanNameXml
+
+**Purpose:** Generate short lowercase names for plans.
+
+**Location:** `app/server/model/prompts/name.go`
+
+**Description:** AI creates concise plan names for the content.
+
+**Format:**
+- Short lowercase file name
+- Use dashes as word separators
+- No spaces, numbers, or special characters
+- 2-3 words max (1-2 if possible)
+- Shorten and abbreviate where possible
+
+**Example:** `add-auth-system`
+
+**Output Formats:**
+- **XML:** `<planName>add-auth-system</planName>`
+- **JSON Function:** Call `namePlan` with `{"planName": "add-auth-system"}`
+
+### SysPipedDataName / SysPipedDataNameXml
+
+**Purpose:** Generate names for piped command output.
+
+**Location:** `app/server/model/prompts/name.go`
+
+**Description:** Create names for data piped into context. Try to guess what command produced it.
+
+**Format:** Same as plan names (short, lowercase, dashes)
+
+**Example:** `git-status`
+
+**Output Formats:**
+- **XML:** `<name>git-status</name>`
+- **JSON Function:** Call `namePipedData` with `{"name": "git-status"}`
+
+### SysNoteName / SysNoteNameXml
+
+**Purpose:** Generate names for arbitrary text notes.
+
+**Location:** `app/server/model/prompts/name.go`
+
+**Description:** Create names for text notes added to context.
+
+**Format:** Same as plan names (short, lowercase, dashes)
+
+**Example:** `meeting-notes`
+
+**Output Formats:**
+- **XML:** `<name>meeting-notes</name>`
+- **JSON Function:** Call `nameNote` with `{"name": "meeting-notes"}`
+
+---
+
+## 10. Summary & Description Prompts
+
+### PlanSummary
+
+**Purpose:** Summarize the entire conversation and plan state.
+
+**Location:** `app/server/model/prompts/summary.go`
+
+**Description:** Creates append-only summary of plan evolution over time.
+
+**Structure:**
+1. **User's Messages Summary:**
+   - Focus on tasks given
+   - Reflect latest version of each task
+   - Omit obsolete information
+   - Condense while retaining meaning
+
+2. **Discussion & Accomplishments:**
+   - Key decisions made
+   - Major changes or updates
+   - Significant challenges identified
+   - Important requirements established
+
+3. **Latest Messages & Next Steps:**
+   - What's been done recently
+   - Next steps discussed
+   - Action items identified
+
+**Key Principles:**
+- Do NOT include code in summary
+- Explain in words what was done and what needs doing
+- Treat as append-only record
+- Keep information from existing summary
+- Add new information from latest messages
+
+### SysDescribe / SysDescribeXml
+
+**Purpose:** Generate commit messages from plans.
+
+**Location:** `app/server/model/prompts/describe.go`
+
+**Description:** Turn AI's plan into structured commit message.
+
+**Output Format:**
+- **XML:** `<commitMsg>Add user authentication system with JWT support</commitMsg>`
+- **JSON Function:** Call `describePlan` with `{"commitMsg": "..."}`
+
+**Qualities:**
+- Good, succinct commit message
+- Describes proposed changes clearly
+- Follows conventional commit style
+
+### SysPendingResults
+
+**Purpose:** Summarize pending changes into one-line commit message.
+
+**Location:** `app/server/model/prompts/describe.go`
+
+**Description:** Takes list of pending change descriptions and creates one-line summary suitable for commit title.
+
+**Output:** ONLY the one-line title, nothing else.
+
+---
+
+## 11. Validation Prompts
+
+### GetValidationReplacementsXmlPrompt
+
+**Purpose:** Validate if changes were applied correctly and fix if needed.
+
+**Location:** `app/server/model/prompts/build_validation_replacements.go`
+
+**Function Signature:** `GetValidationReplacementsXmlPrompt(params ValidationPromptParams) (string, int)`
+
+**Description:** Checks if proposed changes were correctly applied to original file.
+
+**Input Provided:**
+- Original file with line numbers (prefixed `pdx-`)
+- Proposed changes explanation
+- Proposed changes with line numbers (prefixed `pdx-new-`)
+- Diff of applied changes
+- Reasons for verification (ambiguous location, code removed, duplicated)
+- Syntax errors (if any)
+
+**Validation Criteria - ONLY assess:**
+- Changes applied at correct location and nesting
+- All specified additions/modifications included
+- No unintended changes to surrounding code
+- No accidentally removed or duplicated code
+- Syntax errors (if previously specified)
+
+**Do NOT evaluate:**
+- Code quality
+- Missing imports
+- Unused variables
+- Best practices
+- Potential bugs
+
+**Output Format:**
+
+**If Correct:**
+```
+## Evaluate Diff
+[reasoning about why changes are correct]
+
+<PlandexCorrect/>
+<PlandexFinish/>
+```
+
+**If Incorrect:**
+```
+## Evaluate Diff
+[reasoning about what went wrong]
+
+<PlandexIncorrect/>
+
+<PlandexComments>
+[classify each comment as reference or not]
+</PlandexComments>
+
+<PlandexReplacements>
+  <Replacement>
+    <Old>
+      pdx-42: func someFunction() {
+      pdx-43:   code here
+      pdx-44: }
+    </Old>
+    <New>
+      func someFunction() {
+        corrected code here
+      }
+    </New>
+  </Replacement>
+</PlandexReplacements>
+```
+
+**Critical Rules:**
+- `<Old>` must include exact original code with `pdx-` line numbers
+- `<New>` must contain corrected code WITHOUT line numbers
+- NO reference comments in `<New>` (replace with actual code)
+- Replacements ordered by position in file
+- NO overlapping replacements
+
+### CommentClassifierPrompt
+
+**Purpose:** Evaluate which comments are reference comments vs actual code comments.
+
+**Location:** `app/server/model/prompts/build_helpers.go`
+
+**Description:** Analyzes comments in proposed updates to classify them.
+
+**Reference Comment Examples:**
+- `// ... existing code...`
+- `# Existing code...`
+- `/* ... */`
+- `// rest of the function...`
+- `<!-- rest of div tag -->`
+
+**Output Format:**
+```
+<PlandexComments>
+pdx-new-1: // ... existing code ...
+Evaluation: refers to code that starts transaction
+Reference: true
+
+pdx-new-5: // verify user permission
+Evaluation: describes the change being made
+Reference: false
+</PlandexComments>
+```
+
+**Rules:**
+- List EVERY comment from proposed updates
+- Include line number with `pdx-new-` prefix
+- Evaluate if refers to code left out of updates
+- State whether it's a reference comment
+- Reference comments can exist in non-comment file types (JSON, etc.)
+
+### WholeFilePrompt
+
+**Purpose:** Output entire merged file with all changes applied.
+
+**Location:** `app/server/model/prompts/build_whole_file.go`
+
+**Description:** Merge original file with proposed updates to create complete result.
+
+**Key Instructions:**
+- Output ENTIRE merged file
+- Replace ALL reference comments with actual code from original
+- File must be syntactically and semantically correct
+- All code structures properly balanced
+- Use `<PlandexWholeFile>` element
+
+**Output Format:**
+```
+<PlandexWholeFile>
+package main
+
+import "logger"
+
+function main() {
+  logger.info("Hello, world!");
+  exec()
+}
+</PlandexWholeFile>
+```
+
+**Critical Rules:**
+- NO line numbers in output
+- NO reference comments in output
+- Output ENTIRE file no matter how long
+- No other text except file content
+- No triple backticks, only `<PlandexWholeFile>` tags
+- Do NOT remove/change code not in proposed updates
+- End after `</PlandexWholeFile>`, no text after
+
+---
+
+## 12. Execution Status Prompts
+
+### SysExecStatusFinishedSubtask / SysExecStatusFinishedSubtaskXml
+
+**Purpose:** Evaluate if a subtask was fully implemented.
+
+**Location:** `app/server/model/prompts/exec_status.go`
+
+**Description:** Analyzes AI's implementation messages to determine if current task is complete.
+
+**Evaluation Criteria:**
+- Examine current message and possibly previous messages
+- Task only complete if ALL necessary code changes implemented
+- No remaining TODO placeholders
+- No partial implementations
+
+**Consider:**
+- If AI stated task complete, but also check actual implementation
+- Don't validate code quality, only completeness
+- Task finished if all items implemented (even if imperfect)
+- Task NOT finished only if significant step missing
+
+**Output Format:**
+
+**XML:**
+```
+<subtaskStatus>
+<reasoning>Task is complete - all required code changes implemented with no placeholders</reasoning>
+<subtaskFinished>true</subtaskFinished>
+</subtaskStatus>
+```
+
+**JSON Function:** Call `didFinishSubtask` with:
+```json
+{
+  "reasoning": "Task is complete - all required code changes...",
+  "subtaskFinished": true
+}
+```
+
+**Subtask States:**
+- `true`: All necessary code changes completed, no placeholders
+- `false`: Significant steps missing or unexplained placeholders remain
+
+---
+
+## 13. Missing File Prompts
+
+### GetSkipMissingFilePrompt
+
+**Purpose:** Instruct AI to skip generating specific file.
+
+**Location:** `app/server/model/prompts/missing_file.go`
+
+**Function Signature:** `GetSkipMissingFilePrompt(path string) string`
+
+**Description:** Tells AI to not generate content for specified file and continue with plan.
+
+**Behavior:**
+- Skip this file entirely
+- Continue with remaining tasks/subtasks
+- Don't repeat previous message content
+- If no remaining tasks, stop there
+
+**Example:** "You *must not* generate content for the file `config.json`. Skip this file and continue..."
+
+### GetMissingFileContinueGeneratingPrompt
+
+**Purpose:** Continue generating large file across multiple responses.
+
+**Location:** `app/server/model/prompts/missing_file.go`
+
+**Function Signature:** `GetMissingFileContinueGeneratingPrompt(path string) string`
+
+**Description:** For large files that exceed single response, continue from where left off.
+
+**Critical Rules:**
+- Continue EXACTLY where previous message left off
+- Do NOT produce any other output before continuing
+- Do NOT repeat previous message content
+- Do NOT duplicate last line before continuing
+- Do NOT include opening `<PlandexBlock>` tag (already included)
+- Start immediately with code that belongs in file
+- MUST include closing `</PlandexBlock>` tag when done
+- Then continue with plan if remaining tasks
+
+**Example Instruction:** "Continue generating the file 'large_file.py'. Continue EXACTLY where you left off. DO NOT INCLUDE THE FILE PATH OR OPENING TAG..."
+
+---
+
+## Summary
+
+This documentation covers all major AI prompts used in Plandex, organized by their functional purpose:
+
+1. **System Identity** - Core AI role definition
+2. **Planning Phase** - Breaking down tasks into subtasks
+3. **Implementation Phase** - Writing code to complete tasks
+4. **Context Management** - Loading relevant code files
+5. **Chat Mode** - Conversational mode without file changes
+6. **Code Formatting** - Exact format for code changes and explanations
+7. **File Operations** - Moving, removing, resetting files
+8. **Execution & Scripts** - Running commands via _apply.sh
+9. **Naming** - Generating names for plans, data, notes
+10. **Summary & Description** - Creating summaries and commit messages
+11. **Validation** - Verifying changes applied correctly
+12. **Execution Status** - Checking task completion
+13. **Missing Files** - Handling skipped or large files
+
+Each prompt is carefully designed to guide the AI through specific phases of the plan-code-apply workflow, ensuring consistent, high-quality output while maintaining safety and user control.
+
